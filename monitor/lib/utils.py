@@ -41,8 +41,7 @@ def Command(command, stderr=True, cwd=None):
         process = subprocess.Popen(command,
             cwd=cwd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT if stderr else os.devnull,
-            bufsize=1)
+            stderr=subprocess.STDOUT if stderr else os.devnull)
 
         while True:
             if process.poll() is not None:
