@@ -144,6 +144,21 @@ class Config(object):
         self.config = {}
         self.database = None
 
+    def GetField(self, field):
+        """
+        Query the main fields list and return the type hint for the given field if it
+        exists. The function will throw a KeyError in the event the field does not
+        exist or is an invalid submission.
+
+        :param field: String field to lookup in the config.
+        :return: Type hint if the field is known.
+        """
+        if field is None:
+            raise KeyError('Unknown field')
+        if not self.IsLoaded():
+            self.Load()
+        return self.config['fields'][field]
+
     def GetRoot(self):
         """
         Returns the application root of the configuration file.
@@ -153,6 +168,21 @@ class Config(object):
         if not self.IsLoaded():
             self.Load()
         return self.config[self.root]
+
+    def GetTags(self, entity):
+        """
+        Lookup the tags for an entity if it is known. I fthe entity is not known a
+        key error is returned. If the entity has no tags an empty list will be
+        returned.
+
+        :param entity: An entity to lookup in the config.
+        :return: Tag list if the entity is known or an empty list if no tags are given.
+        """
+        if entity is None:
+            raise KeyError('Unknown entity')
+        if not self.IsLoaded():
+            self.Load()
+        return self.config[self.root][entity].get('tags', [])
 
     def IsLoaded(self):
         """
