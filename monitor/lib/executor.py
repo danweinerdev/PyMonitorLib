@@ -29,7 +29,7 @@ class Executor(object):
         self.context = Daemonize(args.daemon, self.logger,
             group=args.group,
             user=args.user)
-        self.pipeline = MetricPipeline(self.config)
+        self.pipeline = MetricPipeline(self.config, logger=self.logger)
         self.__shutdown = False
         self.__rd, self.__wr = None, None
         self.__reload = False
