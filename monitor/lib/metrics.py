@@ -2,6 +2,7 @@ from collections import deque
 from datetime import datetime
 from string import whitespace
 from .config import ConversionFailure, ConvertValue
+from .database import InfluxDatabase
 
 
 class Metric(object):
@@ -29,7 +30,7 @@ class Metric(object):
         :param measurement: Measurement name
         :return: Sanitized string
         """
-        for c in [' ', '.'] + whitespace:
+        for c in [' ', '.']:
             measurement = measurement.replace(c, '_')
         return measurement
 
@@ -136,7 +137,14 @@ class MetricPipeline(object):
                 except KeyError:
                     continue
             try:
-                pass
+                if not self.database:
+                    dbtype, config = self.config.GetDatabase()
+                    if dbtype == 'influxdb':
+                        self.database = InfluxDatabase(config, logger=self.logger, precision='ms')
+                    else:
+                        raise RuntimeError("Unknown database type '{}'".format(dbtype))
+
+                self.database.Write(points)
             except Exception as e:
                 if self.logger:
                     self.logger.error('Unhandled error sending metrics: {}'.format(e))
@@ -173,10 +181,13 @@ class MetricPipeline(object):
         :param config: New config object from the Executor context.
         :return: None
         """
+        if self.logger:
+            self.logger.warning('Reloading metrics pipeline')
         try:
             self.Flush()
             if self.database:
                 self.database.Close()
+            self.database = None
             self.config = config
         except Exception as e:
             if self.logger:
@@ -194,6 +205,7 @@ class MetricPipeline(object):
             self.Flush()
             if self.database:
                 self.database.Close()
+            self.database = None
         except Exception as e:
             if self.logger:
                 self.logger.warning('Error during metric pipeline shutdown: {}'.format(e))

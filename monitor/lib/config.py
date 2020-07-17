@@ -144,6 +144,16 @@ class Config(object):
         self.config = {}
         self.database = None
 
+    def GetDatabase(self):
+        """
+        Retrieve the database configuration from the underlying config.
+
+        :return: A tuple consisting of the database type and the respective configuration.
+        """
+        if not self.IsLoaded():
+            self.Load()
+        return self.database, self.config[self.database]
+
     def GetField(self, field):
         """
         Query the main fields list and return the type hint for the given field if it
