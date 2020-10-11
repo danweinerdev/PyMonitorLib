@@ -7,3 +7,7 @@ class MessageError(Exception):
             self.message = message.format(*args)
         elif kwargs:
             self.message = message.format(**kwargs)
+
+
+class ExecutorError(MessageError):
+    message = 'An error occurred in the Executor'

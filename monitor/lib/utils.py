@@ -5,6 +5,57 @@ import platform
 import pwd
 import select
 import subprocess
+from .exceptions import ExecutorError
+
+
+class Callbacks(object):
+    """
+    Wrapper to allow for the Executor setup o register callbacks for secondary
+    commands on the argument parser.
+    """
+
+    def __init__(self, command):
+        """
+        Constructor.
+
+        :param command: Name of the primary run command that should be treated as a
+                        protected value.
+        """
+        self.command = command
+        self.callbacks = {}
+        self.parsers = None
+
+    def __call__(self, parsers, callback):
+        """
+        Callable which accepts the ArgumentParser from the Executor and passes this
+        wrapper back to the caller to register their sub-commands.
+
+        :param parsers: ArgumentParser sub-parser.
+        :param callback: Uer given callback for registering subcommands.
+        :return:
+        """
+        self.parsers = parsers
+        callback(self)
+
+    def Register(self, name, callback, **kwargs):
+        """
+        Register a callback and add a name to it.
+
+        :param name: Name of the sub-command callback.
+        :param callback: Callbable object.
+        :return: Sub-Parser object
+        """
+        if not callable(callback):
+            raise
+        if name == self.command:
+            raise ExecutorError("Cannot register a secondary '{}' command".format(name))
+        for [k, _] in self.callbacks.items():
+            if name == k:
+                raise ExecutorError("Command '{}' already registered".format(name))
+        self.callbacks[name] = callback
+        parser = self.parsers.add_parser(name, **kwargs)
+        parser.add_argument('--config', required=True, help='Path to the config file')
+        return parser
 
 
 def CloseDescriptor(fd):

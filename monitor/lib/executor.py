@@ -6,33 +6,41 @@ import signal
 import sys
 from .config import Config, ConfigError
 from .daemon import Daemonize
+from .exceptions import ExecutorError
 from .metrics import MetricPipeline
 from .result import Result
-from .utils import CloseDescriptor, Select, SetNonBlocking
+from .utils import Callbacks, CloseDescriptor, Select, SetNonBlocking
 
 
 class Executor(object):
 
-    def __init__(self, args, root):
+    def __init__(self, args, root, callbacks=None):
         """
         Constructor for the Executor. It takes the argument parser args and the root
         configuration element from the caller and builds the corresponding data structures.
 
         :param args: Argument parser resultset.
         :param root: Root element in the configuration file determined by the caller.
+        :param callbacks: Callback helper for handling user-generated sub-commands.
         """
-        self.interval = int(args.interval)
-        self.pidFile = args.pidfile
+        self.args = args
+        self.callbacks = getattr(callbacks, 'callbacks', None)
+        self.command = getattr(callbacks, 'command', None)
+        self.action = getattr(args, 'command', None)
         self.config = Config(args.config, root)
-        self.logfile = args.logfile
-        self.logger = self.SetupLogging(self.logfile, args.loglevel)
-        self.context = Daemonize(args.daemon, self.logger,
-            group=args.group,
-            user=args.user)
-        self.pipeline = MetricPipeline(self.config, logger=self.logger)
-        self.__shutdown = False
-        self.__rd, self.__wr = None, None
-        self.__reload = False
+
+        if not self.action or self.action == self.command:
+            self.interval = int(args.interval)
+            self.pidFile = args.pidfile
+            self.logfile = args.logfile
+            self.logger = self.SetupLogging(self.logfile, args.loglevel)
+            self.context = Daemonize(args.daemon, self.logger,
+                group=args.group,
+                user=args.user)
+            self.pipeline = MetricPipeline(self.config, logger=self.logger)
+            self.__shutdown = False
+            self.__rd, self.__wr = None, None
+            self.__reload = False
 
     @staticmethod
     def Configure(parser):
@@ -103,6 +111,12 @@ class Executor(object):
                          value from the Result enumerable type.
         :return:
         """
+        if self.action is not None and self.action != self.command:
+            if self.action in self.callbacks:
+                return self.callbacks[self.action](self.config, self.args)
+            print("Unknown command: {}".format(self.action))
+            raise SystemExit
+
         if not self.Start(validate=True):
             raise SystemExit
 
@@ -282,7 +296,7 @@ class Executor(object):
         return True
 
 
-def Execute(callback, root):
+def Execute(callback, root, command='run', commands=None):
     """
     Create an Executor instance that runs for the given callback. This function
     acts as an all in one to create the Executor, build the command parser, and
@@ -296,11 +310,27 @@ def Execute(callback, root):
                      every given interval.
     :param root: Root node in the config that lists all other entries. This field
                  should be listed under globals.
+    :param command: String which should be used for the sub-command if the caller
+                    supplies a callback for more sub-commands. This should
+                    represent the command which triggers the daemonized polling
+                    process to start.
+    :param commands: Callback which can register more one-off sub-commands.
     :return: None
     """
     parser = argparse.ArgumentParser(sys.argv[0])
-    Executor.Configure(parser)
+    callbacks = Callbacks(command)
+
+    if commands is not None:
+        if not callable(commands):
+            raise ExecutorError('sub-command callbacks must be callable')
+        parsers = parser.add_subparsers(dest='command',
+            help='Available sub-command options')
+        Executor.Configure(parsers.add_parser(command,
+            help='Execute the daemonized polling process'))
+        callbacks(parsers, commands)
+    else:
+        Executor.Configure(parser)
 
     args = parser.parse_args()
-    executor = Executor(args, root)
+    executor = Executor(args, root, callbacks=callbacks)
     executor.Run(callback)
