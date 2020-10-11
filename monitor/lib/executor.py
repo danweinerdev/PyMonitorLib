@@ -105,6 +105,8 @@ class Executor(object):
         """
         if not self.Start(validate=True):
             raise SystemExit
+
+        crash = False
         with self.context:
             try:
                 self.__rd, self.__wr = os.pipe()
@@ -141,10 +143,13 @@ class Executor(object):
                     except KeyboardInterrupt:
                         self.logger.warning('Shutdown initiated')
                         self.__shutdown = True
+            except RuntimeError as e:
+                if self.logger:
+                    self.logger.fatal('Fatal error in main loop: {}'.format(e))
+                crash = True
             except Exception as e:
                 if self.logger:
                     self.logger.error('Unexpected exception in main loop: {}'.format(e))
-                self.__shutdown = True
             finally:
                 if self.__rd:
                     CloseDescriptor(self.__rd)
@@ -152,7 +157,7 @@ class Executor(object):
                     CloseDescriptor(self.__wr)
                 if self.pipeline:
                     try:
-                        self.pipeline.Shutdown()
+                        self.pipeline.Shutdown(crash=crash)
                     except Exception as e:
                         self.logger.warning('Error during database shutdown: {}'.format(e))
 

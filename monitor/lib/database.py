@@ -74,6 +74,10 @@ class InfluxDatabase(Database):
                 ssl=self.config['ssl'],
                 verify_ssl=self.config['verify'],
                 database=self.config['database'])
+        except KeyError as e:
+            # If any of the configuration options are missing we need to trigger a fatal
+            # error because we cannot recover from this.
+            raise RuntimeError("Missing configuration option '{}'".format(e.args[0]))
         except Exception as e:
             if self.logger:
                 self.logger.error('Failed to initiate influx db connection: {}'.format(e))

@@ -145,6 +145,11 @@ class MetricPipeline(object):
                         raise RuntimeError("Unknown database type '{}'".format(dbtype))
 
                 self.database.Write(points)
+            except RuntimeError as e:
+                # Push any RuntimeErrors up to the main loop to handle. These usually indicate
+                # that we need to crash.
+                status = False
+                raise e
             except Exception as e:
                 if self.logger:
                     self.logger.error('Unhandled error sending metrics: {}'.format(e))
@@ -193,7 +198,7 @@ class MetricPipeline(object):
             if self.logger:
                 self.logger.warning('Error during reload: {}'.format(e))
 
-    def Shutdown(self):
+    def Shutdown(self, crash=False):
         """
         Shutdown the message pipeline. This will flush the remaining metrics to the database
         before disconnecting the connection and setting the shutdown flag. If the database
@@ -207,6 +212,6 @@ class MetricPipeline(object):
                 self.database.Close()
             self.database = None
         except Exception as e:
-            if self.logger:
+            if self.logger and not crash:
                 self.logger.warning('Error during metric pipeline shutdown: {}'.format(e))
         self.shutdown = True
