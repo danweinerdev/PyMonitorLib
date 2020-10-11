@@ -288,7 +288,7 @@ class Executor(object):
                     return False
 
         if not validate:
-            self.logger.info('Installing signal handlers')
+            self.logger.debug('Installing signal handlers')
             signal.signal(signal.SIGHUP, self.SignalHandler)
             signal.signal(signal.SIGINT, self.SignalHandler)
             signal.signal(signal.SIGTERM, self.SignalHandler)
