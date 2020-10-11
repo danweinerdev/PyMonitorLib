@@ -11,7 +11,7 @@ except IOError as e:
 # Package classifiers: https://pypi.org/classifiers/
 
 setuptools.setup(
-    name='monitor-lib',
+    name='PyMonitorLib',
     version='0.1.0',
     author='Daniel Weiner',
     author_email='info@phantomnet.net',
@@ -20,7 +20,7 @@ setuptools.setup(
                 'telemetry at a set interval.',
     long_description=description.decode('utf-8'),
     long_description_content_type='text/markdown',
-    url='https://github.com/Aprelius/monitor-lib',
+    url='https://github.com/Aprelius/PyMonitorLib',
     packages=setuptools.find_packages(),
     classifiers=[
         'Development Status :: 3 - Alpha',
