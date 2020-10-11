@@ -18,7 +18,7 @@ setuptools.setup(
     description='Library for creating simple interval processes. This is especially '
                 'useful for interval based monitoring application that generate '
                 'telemetry at a set interval.',
-    long_description=description,
+    long_description=description.decode('utf-8'),
     long_description_content_type='text/markdown',
     url='https://github.com/Aprelius/monitor-lib',
     packages=setuptools.find_packages(),
