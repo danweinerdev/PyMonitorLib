@@ -29,7 +29,7 @@ pipeline {
             steps {
                 withCredentials([
                     usernamePassword(
-                        credentialsId: 'PyPI_API_Token',
+                        credentialsId: 'PyPi_PyMonitorLib_API_Token',
                         usernameVariable: 'PYPI_USERNAME',
                         passwordVariable: 'PYPI_PASSWORD')])
                 {
