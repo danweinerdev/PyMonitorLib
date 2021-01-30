@@ -2,8 +2,7 @@ pipeline {
     agent {
         dockerfile {
             customWorkspace "workspace/${env.JOB_NAME}/${env.BUILD_NUMBER}"
-            dir 'deploy'
-            filename 'Builder.Dockerfile'
+            filename 'deploy/Builder.Dockerfile'
             label 'linux && docker'
             additionalBuildArgs '--network host'
             args '--network host'
