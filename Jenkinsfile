@@ -10,6 +10,10 @@ pipeline {
         }
     }
 
+    triggers {
+        pollSCM('H/5 * * * * ')
+    }
+
     stages {
         stage('Validate parameters') {
             steps {
@@ -18,29 +22,9 @@ pipeline {
                 }
             }
         }
-        stage('Build Package') {
+        stage('Run Tests') {
             steps {
-                script {
-                    sh "python3 setup.py sdist bdist_wheel"
-                }
-            }
-        }
-        stage('Publish Package') {
-            steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'PyPi_PyMonitorLib_API_Token',
-                        usernameVariable: 'PYPI_USERNAME',
-                        passwordVariable: 'PYPI_PASSWORD')])
-                {
-                    sh '''
-                        set +x
-                        python3 -m twine upload --non-interactive \
-                            --username $PYPI_USERNAME \
-                            --password $PYPI_PASSWORD \
-                            dist/*
-                    '''
-                }
+                sh "/bin/true"
             }
         }
     }
