@@ -177,6 +177,8 @@ class Config(object):
         """
         if not self.IsLoaded():
             self.Load()
+        if self.path is None:
+            return {}
         return self.config[self.root]
 
     def GetTags(self, entity):
@@ -192,6 +194,8 @@ class Config(object):
             raise KeyError('Unknown entity')
         if not self.IsLoaded():
             self.Load()
+        if self.path is None:
+            return {}
         return self.config[self.root][entity].get('tags', [])
 
     def IsLoaded(self):
@@ -200,6 +204,8 @@ class Config(object):
 
         :return: True or False if the config has been loaded.
         """
+        if self.path is None:
+            return True
         return len(self.config) > 0
 
     def Load(self):
@@ -211,6 +217,9 @@ class Config(object):
 
         :return: None
         """
+        if self.IsLoaded():
+            return
+
         if not os.path.isfile(self.path):
             raise ConfigError('Config file does not exist')
 

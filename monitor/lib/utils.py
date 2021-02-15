@@ -46,7 +46,7 @@ class Callbacks(object):
         :return: Sub-Parser object
         """
         if not callable(callback):
-            raise
+            raise ExecutorError('Callback is not callable')
         if name == self.command:
             raise ExecutorError("Cannot register a secondary '{}' command".format(name))
         for [k, _] in self.callbacks.items():
@@ -54,7 +54,7 @@ class Callbacks(object):
                 raise ExecutorError("Command '{}' already registered".format(name))
         self.callbacks[name] = callback
         parser = self.parsers.add_parser(name, **kwargs)
-        parser.add_argument('--config', required=True, help='Path to the config file')
+        parser.add_argument('--config', help='Path to the config file')
         return parser
 
 
