@@ -332,5 +332,10 @@ def Execute(callback, root, command='run', commands=None):
         Executor.Configure(parser)
 
     args = parser.parse_args()
+
+    if not hasattr(args, 'config'):
+        parser.print_help()
+        sys.exit(1)
+
     executor = Executor(args, root, callbacks=callbacks)
     executor.Run(callback)
