@@ -1,5 +1,8 @@
+import logging
+
 try:
-    import influxdb
+    from influxdb_client import InfluxDBClient, Point
+    from influxdb_client.client.write_api import SYNCHRONOUS
     INFLUXDB_SUPPORTED = True
 except ImportError:
     INFLUXDB_SUPPORTED = False
@@ -13,13 +16,19 @@ class Database(object):
     def Initialize(self):
         raise NotImplementedError
 
+    @staticmethod
+    def CheckConfig(config: dict, required: list = None, optional: list = None) -> None:
+        pass
+
     def Write(self, metrics):
         raise NotImplementedError
 
 
 class InfluxDatabase(Database):
+    REQUIRED_KEYS = [('bucket', str), ('org', str), ('server', str), ('token', str)]
+    OPTIONAL_KEYS = [('protocol', ['http', 'https']), ('port', int)]
 
-    def __init__(self, config, precision='ms', logger=None):
+    def __init__(self, config: dict, precision: str = 'ms', logger: logging.Logger = None):
         """
         InfluxDB database constructor.
 
@@ -33,10 +42,17 @@ class InfluxDatabase(Database):
         if not INFLUXDB_SUPPORTED:
             raise RuntimeError('InfluxDB is not installed')
 
+        self.CheckConfig(config,
+                         required=self.REQUIRED_KEYS,
+                         optional=self.OPTIONAL_KEYS)
+
         self.config = config
         self.precision = precision
         self.logger = logger
-        self.handle = None
+        self.client = None
+
+        self.writer = None
+        self.query = None
 
     def Close(self):
         """
@@ -49,12 +65,24 @@ class InfluxDatabase(Database):
         """
         if not INFLUXDB_SUPPORTED:
             raise RuntimeError('InfluxDB is not installed')
-        if self.handle:
+        if self.client:
             try:
-                self.handle.close()
+                self.client.close()
             except Exception as e:
                 if self.logger:
                     self.logger.warning('Failed to close influx db connection: {}'.format(e))
+
+    def Flush(self):
+        """
+        Flush the database.
+
+        :return:
+        """
+        if not INFLUXDB_SUPPORTED:
+            raise RuntimeError('InfluxDB is not installed')
+        if not self.writer and not self.Initialize():
+            return
+        self.writer.flush()
 
     def Initialize(self):
         """
@@ -68,12 +96,13 @@ class InfluxDatabase(Database):
         if not INFLUXDB_SUPPORTED:
             raise RuntimeError('InfluxDB is not installed')
         try:
-            self.handle = influxdb.InfluxDBClient(
-                host=self.config['server'],
-                port=self.config['port'],
-                ssl=self.config['ssl'],
-                verify_ssl=self.config['verify'],
-                database=self.config['database'])
+            self.client = InfluxDBClient(
+                url="{}://{}:{}".format(
+                    self.config.get('protocol', 'https'),
+                    self.config['server'],
+                    self.config.get('port', 443)),
+                token=self.config['token'],
+                org=self.config['org'])
         except KeyError as e:
             # If any of the configuration options are missing we need to trigger a fatal
             # error because we cannot recover from this.
@@ -81,8 +110,14 @@ class InfluxDatabase(Database):
         except Exception as e:
             if self.logger:
                 self.logger.error('Failed to initiate influx db connection: {}'.format(e))
-            self.handle = None
+            self.client = None
             return False
+
+        writeOptions = SYNCHRONOUS
+        writeOptions.batch_size = 16
+
+        self.writer = self.client.write_api(write_options=writeOptions)
+        self.query = self.client.query_api()
 
         return True
 
@@ -98,7 +133,7 @@ class InfluxDatabase(Database):
         """
         if not INFLUXDB_SUPPORTED:
             raise RuntimeError('InfluxDB is not installed')
-        if not self.handle and not self.Initialize():
+        if not self.writer and not self.Initialize():
             return False
-        self.handle.write_points(metrics, time_precision=self.precision)
+        self.writer.write(bucket=self.config['bucket'], record=metrics)
         return True

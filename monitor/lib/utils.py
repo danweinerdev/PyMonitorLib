@@ -1,11 +1,15 @@
-import fcntl
-import grp
+from datetime import datetime, timedelta
 import os
-import platform
-import pwd
-import select
+import selectors
 import subprocess
 from .exceptions import ExecutorError
+
+if os.name == 'posix':
+    import fcntl
+    import grp
+    import pwd
+if os.name == 'nt':
+    import ctypes
 
 
 class Callbacks(object):
@@ -108,6 +112,24 @@ def Command(command, stderr=True, cwd=None):
     return process.poll(), output
 
 
+def GetErrorMessage(err):
+    if os.name == 'nt':
+        FORMAT_MESSAGE_FROM_SYSTEM = 0x00001000
+        msg_buffer = ctypes.create_unicode_buffer(256)
+        ctypes.windll.kernel32.FormatMessageW(
+            FORMAT_MESSAGE_FROM_SYSTEM,
+            None,
+            err,
+            0,
+            msg_buffer,
+            len(msg_buffer),
+            None)
+
+        return msg_buffer.value.strip()
+    else:
+        return os.strerror(err)
+
+
 def GetGroupId(group):
     """
     On a Linux system attempt to get the GID value for a give 'group'. This uses
@@ -118,12 +140,12 @@ def GetGroupId(group):
     """
     if isinstance(group, int):
         return group
-    if platform.system() != 'Linux':
-        raise RuntimeError('GID lookup not support outside of Linux')
-    try:
-        return grp.getgrnam(group).gr_gid
-    except KeyError:
-        return None
+    if os.name == 'posix':
+        try:
+            return grp.getgrnam(group).gr_gid
+        except KeyError:
+            pass
+    return None
 
 
 def GetUserId(user):
@@ -136,12 +158,12 @@ def GetUserId(user):
     """
     if isinstance(user, int):
         return user
-    if platform.system() != 'Linux':
-        raise RuntimeError('UID lookup not support outside of Linux')
-    try:
-        return pwd.getpwnam(user).pw_uid
-    except KeyError:
-        return None
+    if os.name == 'posix':
+        try:
+            return pwd.getpwnam(user).pw_uid
+        except KeyError:
+            pass
+    return None
 
 
 def RedirectStream(source, target=None):
@@ -153,11 +175,12 @@ def RedirectStream(source, target=None):
     :param target: Target file descriptor. If None is provided /dev/null is used.
     :return: None
     """
-    if target is None:
-        target = os.open(os.devnull, os.O_RDWR)
-    else:
-        target = target.fileno()
-    os.dup2(target, source.fileno())
+    if os.name == 'posix':
+        if target is None:
+            target = os.open(os.devnull, os.O_RDWR)
+        else:
+            target = target.fileno()
+        os.dup2(target, source.fileno())
 
 
 def Select(rds, wrts, timeout, logger=None):
@@ -169,7 +192,7 @@ def Select(rds, wrts, timeout, logger=None):
 
     :param rds: Set of reader descriptors.
     :param wrts: Set of writer descriptors.
-    :param timeout: Timeout value to wait for an event.
+    :param timeout: Timeout (in seconds) value to wait for an event.
     :param logger: Optional logger instance in the event of errors.
     :return: None if a failure occurred, or the descriptors which an event occurred.
     """
@@ -178,18 +201,38 @@ def Select(rds, wrts, timeout, logger=None):
     if not isinstance(wrts, list):
         wrts = [wrts]
 
+    start = datetime.now()
+    end = start + timedelta(seconds=timeout)
+    selector = selectors.DefaultSelector()
+    res = None
+
     try:
-        res = select.select(rds, wrts, [], float(timeout))
-    except select.error as e:
-        if logger:
-            logger.error('Select error: {}'.format(e))
-        return None
+        for rd in rds:
+            selector.register(rd, selectors.EVENT_READ)
+        for wr in wrts:
+            selector.register(wr, selectors.EVENT_WRITE)
+
+        while datetime.now() < end:
+            res = selector.select(timeout=0.1)
+            if res:
+                break
+
     except os.error as e:
         if logger:
-            logger.error('OSError: [{}] {}'.format(e.errno, os.strerror(e.errno)))
+            logger.error('OSError: [{}] {}'.format(e.errno, GetErrorMessage(e.errno)))
         return None
     except KeyboardInterrupt:
-        return []
+        return None
+    finally:
+        try:
+            selector.close()
+        except Exception as e:
+            if logger:
+                logger.error('Exception during selector close: {}'.format(e))
+
+    if logger:
+        duration = datetime.now() - start
+        logger.debug('Interval completed in: {}'.format(duration.total_seconds()))
 
     return res
 
@@ -201,8 +244,11 @@ def SetNonBlocking(fd):
     :param fd: File descriptor object
     :return: None
     """
-    fl = fcntl.fcntl(fd, fcntl.F_GETFL)
-    fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+    if os.name == 'posix':
+        fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+    if os.name == 'nt':
+        fd.setblocking(False)
 
 
 def SetProcessOwner(user, group, logger=None):
@@ -217,20 +263,21 @@ def SetProcessOwner(user, group, logger=None):
     :param logger: Optional logger instance in the event of errors.
     :return: None
     """
-    try:
-        if user is not None:
-            os.setuid(user)
-    except OSError as e:
-        if logger:
-            logger.error("Failed to set process user '{}': [{}] {}".format(
-                user, e.errno, os.strerror(e.errno)))
-    try:
-        if group is not None:
-            os.setgid(group)
-    except OSError as e:
-        if logger:
-            logger.error("Failed to set process group '{}': [{}] {}".format(
-                group, e.errno, os.strerror(e.errno)))
+    if os.name == 'posix':
+        try:
+            if user is not None:
+                os.setuid(user)
+        except OSError as e:
+            if logger:
+                logger.error("Failed to set process user '{}': [{}] {}".format(
+                    user, e.errno, os.strerror(e.errno)))
+        try:
+            if group is not None:
+                os.setgid(group)
+        except OSError as e:
+            if logger:
+                logger.error("Failed to set process group '{}': [{}] {}".format(
+                    group, e.errno, os.strerror(e.errno)))
 
 
 def SetProcessUmask(umask, logger=None):
@@ -241,9 +288,10 @@ def SetProcessUmask(umask, logger=None):
     :param logger: Optional logger instance in the event of errors.
     :return: None
     """
-    try:
-        os.umask(umask)
-    except OSError as e:
-        if logger:
-            logger.error('Failed to set umask: [{}] {}'.format(
-                e.errno, os.strerror(e.errno)))
+    if os.name == 'posix':
+        try:
+            os.umask(umask)
+        except OSError as e:
+            if logger:
+                logger.error('Failed to set umask: [{}] {}'.format(
+                    e.errno, os.strerror(e.errno)))

@@ -104,7 +104,31 @@ def ConvertValue(value, hint=None):
             return ConvertBoolean(value)
 
 
+def DefaultValue(hint):
+    """
+
+    :param hint:
+    :return:
+    """
+    if hint == Config.ARRAY_TYPE:
+        return []
+    elif hint == Config.HASH_TYPE:
+        return {}
+    elif hint == Config.INT_TYPE:
+        return int(0)
+    elif hint == Config.BOOL_TYPE:
+        return False
+    elif hint == Config.FLOAT_TYPE:
+        return float(0)
+    elif hint == Config.STRING_TYPE:
+        return str()
+    raise ConversionFailure
+
+
 class Config(object):
+    REQUIRED = True
+    OPTIONAL = False
+
     ARRAY_TYPE = 'array'
     BOOL_TYPE = 'bool'
     FLOAT_TYPE = 'float'
@@ -121,11 +145,14 @@ class Config(object):
             ('port', INT_TYPE),
             ('server', STRING_TYPE),
             ('ssl', BOOL_TYPE),
-            ('verify', BOOL_TYPE)
+            ('verify', BOOL_TYPE),
+            ('org', STRING_TYPE),
+            ('token', STRING_TYPE),
+            ('bucket', STRING_TYPE)
         ]}
     ENTRY_FIELDS = [
-        ('fields', ARRAY_TYPE),
-        ('tags', HASH_TYPE)
+        ('fields', ARRAY_TYPE, REQUIRED),
+        ('tags', HASH_TYPE, OPTIONAL)
     ]
 
     def __init__(self, path, root):
@@ -261,12 +288,17 @@ class Config(object):
         if len(self.config[self.root]) == 0:
             raise InvalidConfigError("Root element '{}' has no entries".format(self.root))
 
+        for device in self.config[self.root]:
+            if not parser.has_section(device):
+                raise InvalidConfigError("Missing device configuration '{}'".format(device))
+
         fields = {}
         for entry in self.config[self.root].keys():
-            self.RequiredFields(parser, entry, [k for k, v in self.ENTRY_FIELDS])
-            self.config[self.root][entry] = {}
+            self.RequiredFields(parser, entry, [k for k, v, r in self.ENTRY_FIELDS if r])
+            self.OptionalFields(parser, entry, [k for k, v, r in self.ENTRY_FIELDS if not r])
+            self.config[self.root][entry] = {'device': entry}
 
-            for field, hint in self.ENTRY_FIELDS:
+            for field, hint, required in self.ENTRY_FIELDS:
                 if parser.has_option(entry, field):
                     try:
                         self.config[self.root][entry][field] = ConvertValue(
@@ -275,6 +307,11 @@ class Config(object):
                     except ConversionFailure:
                         raise InvalidConfigError("Invalid field '{}' expected type '{}'"
                             .format(field, hint))
+                else:
+                    if required:
+                        raise InvalidConfigError("Section '{}' missing required field '{}'".format(
+                            entry, field))
+                    self.config[self.root][entry][field] = DefaultValue(hint)
 
             for option in parser.options(entry):
                 if option in self.config[self.root][entry]:
@@ -345,6 +382,10 @@ class Config(object):
             if not parser.has_option(section, field):
                 raise InvalidConfigError("Section '{}' missing required field '{}'"
                     .format(section, field))
+
+    @staticmethod
+    def OptionalFields(parser, section, fields):
+        pass
 
     def Reload(self):
         """

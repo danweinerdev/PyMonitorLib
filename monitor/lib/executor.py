@@ -1,7 +1,9 @@
 import argparse
+import datetime
 import logging
 from logging.handlers import TimedRotatingFileHandler
 import os
+import socket
 import signal
 import sys
 from .config import Config, ConfigError
@@ -27,6 +29,7 @@ class Executor(object):
         self.callbacks = getattr(callbacks, 'callbacks', None)
         self.command = getattr(callbacks, 'command', None)
         self.action = getattr(args, 'command', None)
+        self.debug = getattr(args, 'debug', False)
         self.config = Config(args.config, root)
 
         if not self.action or self.action == self.command:
@@ -52,6 +55,8 @@ class Executor(object):
         """
         parser.add_argument('--daemon', '-d', action='store_true', default=False,
             help='Daemonize the application (only supported on Linux).')
+        parser.add_argument('--debug', action='store_true', default=False,
+            help='Debug mode indicates that most of the daemonizing and process handling should skip')
         parser.add_argument('--interval', '-i', type=int, default=10,
             help='Interval at which the runnable callback should be executed')
         parser.add_argument('--logfile', '-f', required=False,
@@ -80,8 +85,13 @@ class Executor(object):
         :return:
         """
         if self.__wr:
+            if self.logger:
+                self.logger.info('Notify Selector to wake up')
             try:
-                os.write(self.__wr, b'.')
+                if os.name == 'nt':
+                    self.__wr.send(b'.')
+                else:
+                    os.write(self.__wr, b'.')
             except (IOError, OSError):
                 pass
 
@@ -123,7 +133,10 @@ class Executor(object):
         crash = False
         with self.context:
             try:
-                self.__rd, self.__wr = os.pipe()
+                if os.name == 'nt':
+                    self.__rd, self.__wr = socket.socketpair()
+                else:
+                    self.__rd, self.__wr = os.pipe()
                 SetNonBlocking(self.__rd)
                 SetNonBlocking(self.__wr)
             except (IOError, OSError):
@@ -149,9 +162,13 @@ class Executor(object):
                         failures = 0
                         if not self.__shutdown:
                             self.pipeline.Flush()
-                            if Select(self.__rd, [], self.interval):
+                            if Select(self.__rd, [], self.interval, logger=self.logger):
                                 try:
-                                    os.read(self.__rd, 1)
+                                    # TODO: Turn this into a Drain() function
+                                    if os.name == 'nt':
+                                        self.__rd.recv(64)
+                                    else:
+                                        os.read(self.__rd, 64)
                                 except (IOError, OSError):
                                     pass
                     except KeyboardInterrupt:
@@ -163,7 +180,7 @@ class Executor(object):
                 crash = True
             except Exception as e:
                 if self.logger:
-                    self.logger.error('Unexpected exception in main loop: {}'.format(e))
+                    self.logger.exception('Unexpected exception in main loop: {}'.format(e))
             finally:
                 if self.__rd:
                     CloseDescriptor(self.__rd)
@@ -204,9 +221,17 @@ class Executor(object):
             elif loglevel == 'CRITICAL':
                 level = logging.CRITICAL
 
+        class LogFormatter(logging.Formatter):
+            def formatTime(self, record, datefmt=None):
+                # Use ISO 8601 format
+                return datetime.datetime.fromtimestamp(record.created).isoformat()
+
+        formatter = LogFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
         if stdout or not logfile:
             console = logging.StreamHandler(stream=sys.stdout)
             console.setLevel(level)
+            console.setFormatter(formatter)
             logger.addHandler(console)
         if logfile:
             handler = TimedRotatingFileHandler(
@@ -214,6 +239,7 @@ class Executor(object):
                 backupCount=3,
                 when='midnight')
             handler.setLevel(level)
+            handler.setFormatter(formatter)
             logger.addHandler(handler)
 
         logger.setLevel(level)
@@ -271,7 +297,7 @@ class Executor(object):
                 self.logger.error('Failed to create the log file')
                 return False
 
-        if self.pidFile:
+        if not self.debug and self.pidFile:
             path = os.path.basename(self.pidFile)
             if not os.path.exists(path):
                 try:
@@ -289,7 +315,8 @@ class Executor(object):
 
         if not validate:
             self.logger.debug('Installing signal handlers')
-            signal.signal(signal.SIGHUP, self.SignalHandler)
+            if os.name == 'posix':
+                signal.signal(signal.SIGHUP, self.SignalHandler)
             signal.signal(signal.SIGINT, self.SignalHandler)
             signal.signal(signal.SIGTERM, self.SignalHandler)
 

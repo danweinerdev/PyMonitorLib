@@ -1,25 +1,33 @@
-from collections import deque
-from datetime import datetime
-from string import whitespace
-from .config import ConversionFailure, ConvertValue
+from datetime import datetime, UTC
+from typing import Union
+from .config import Config, ConversionFailure, ConvertValue, DefaultValue
 from .database import InfluxDatabase
+from influxdb_client import Point, WritePrecision
+
+MetricValue = Union[int, float, str]
 
 
 class Metric(object):
 
-    def __init__(self, entity, measurement, value):
+    def __init__(self, entity: str, measurement: str, tags: dict = None):
         """
         Constructor for a single metric.
 
         :param entity: Identifier for the config entry which generated this measurement.
         :param measurement: String describing what this metric is recording.
-        :param value: Raw value being record. The value will be serialized accordingly
-                      when enqueued.
+        :param tags: List of tags associated with this metric.
         """
         self.entity = entity
-        self.timestamp = datetime.utcnow()
+        self.timestamp = datetime.now(UTC)
+        self.tags = tags or {}
         self.measurement = measurement
-        self.value = value
+        self.fields = {}
+
+    def __str__(self):
+        return '<Metric({}): {}>'.format(self.measurement, self.entity)
+
+    def AddField(self, field: str, value: MetricValue) -> None:
+        self.fields[field] = {'original': value, 'clean': None}
 
     @staticmethod
     def Sanitize(measurement):
@@ -42,7 +50,7 @@ class Metric(object):
         :param now: Optional datetime value. If None will default to utcnow().
         :return: Serialized date-time string.
         """
-        now = now or datetime.utcnow()
+        now = now or datetime.now(UTC)
         return now.strftime('%Y-%m-%dT%H:%M:%SZ')
 
 
@@ -50,7 +58,7 @@ class MetricPipeline(object):
 
     DEFAULT_BATCH_SIZE = 10
 
-    def __init__(self, config, batchSize=DEFAULT_BATCH_SIZE, logger=None):
+    def __init__(self, config: Config, batchSize=DEFAULT_BATCH_SIZE, logger=None):
         """
         Constructor for the measurement pipeline.
 
@@ -63,14 +71,14 @@ class MetricPipeline(object):
         self.config = config
         self.logger = logger
         self.batchSize = int(batchSize)
-        self.queue = deque()
+        self.queue = []
         self.database = None
         self.shutdown = False
 
-    def __call__(self, metrics):
+    def __call__(self, metrics: list):
         self.Enqueue(metrics)
 
-    def Enqueue(self, metrics):
+    def Enqueue(self, metrics: list):
         """
         Append a set of metrics onto the metric queue for sending to the backend database.
         Note that metrics are attempted after every iteration however if the database is
@@ -90,20 +98,24 @@ class MetricPipeline(object):
                 if self.logger:
                     self.logger.warning('Invalid metric sent to the queue')
                 continue
-            try:
-                metric.value = ConvertValue(
-                    metric.value,
-                    hint=self.config.GetField(metric.measurement))
-            except KeyError:
-                if self.logger:
-                    self.logger.warning("Invalid metric '{}'".format(metric.measurement))
-                continue
-            except ConversionFailure:
-                if self.logger:
-                    self.logger.warning("Unable to convert measurement '{}' value '{}'"
-                        .format(metric.measurement, metric.value))
-                continue
-            self.queue.append(metric)
+            skip = False
+            for field in metric.fields:
+                value = metric.fields[field]['original']
+                hint = self.config.GetField(field)
+                try:
+                    metric.fields[field]['clean'] = ConvertValue(value, hint=hint)
+                except KeyError:
+                    if self.logger:
+                        self.logger.warning("Invalid metric '{}'".format(metric.measurement))
+                        skip = True
+                    break
+                except ConversionFailure:
+                    if self.logger:
+                        self.logger.warning("Unable to convert measurement '{}' value '{}'"
+                            .format(metric.measurement, value))
+                    metric.fields[field]['clean'] = DefaultValue(hint)
+            if not skip:
+                self.queue.append(metric)
 
     def Flush(self):
         """
@@ -116,26 +128,30 @@ class MetricPipeline(object):
         if self.shutdown:
             return
 
-        count = 0
-        start = datetime.utcnow()
-        status = True
-        while status and not self.IsEmpty():
-            metrics = []
-            while len(metrics) < self.batchSize:
-                try:
-                    metrics.append(self.queue.popleft())
-                except IndexError:
-                    break
+        sent = 0
+        start = datetime.now(UTC)
+
+        while not self.IsEmpty():
+            # Copy a slice of metrics from the front of the queue equal to the batch size
+            # or the queue size, whatever is less. We copy here to ensure we can successfully
+            # send the metrics before popping them off the queue.
+            count = min(len(self.queue), self.batchSize)
+
             points = []
-            for metric in metrics:
-                try:
-                    points.append({
-                        'measurement': Metric.Sanitize(metric.measurement),
-                        'tags': self.config.GetTags(metric.entity),
-                        'time': Metric.TimeStamp(metric.timestamp),
-                        'fields': {'value': metric.value}})
-                except KeyError:
+            for i in range(count):
+                metric = self.queue[i]
+
+                if len(metric.fields) == 0:
                     continue
+
+                point = Point(metric.measurement)
+                for tag, value in metric.tags.items():
+                    point.tag(tag, value)
+                for name, field in metric.fields.items():
+                    point.field(name, field['clean'])
+                point.time(metric.timestamp, WritePrecision.MS)
+                points.append(point)
+
             try:
                 if not self.database:
                     dbtype, config = self.config.GetDatabase()
@@ -145,26 +161,31 @@ class MetricPipeline(object):
                         raise RuntimeError("Unknown database type '{}'".format(dbtype))
 
                 self.database.Write(points)
+                self.database.Flush()
             except RuntimeError as e:
                 # Push any RuntimeErrors up to the main loop to handle. These usually indicate
                 # that we need to crash.
-                status = False
                 raise e
             except Exception as e:
                 if self.logger:
                     self.logger.error('Unhandled error sending metrics: {}'.format(e))
-                status = False
-            finally:
-                if not status:
-                    while metrics:
-                        self.queue.appendleft(metrics.pop(-1))
-            if status:
-                count += len(points)
+                continue
 
-        stop = datetime.utcnow()
-        if status and self.logger and count > 0:
-            self.logger.debug("Uploaded '{}' metrics in {:.3f}ms"
-                .format(count, (stop - start).total_seconds() * 1000))
+            # If an exception was not raised it is likely that the call to sending the metrics to
+            # the database succeeded as planned and we should count the metrics as part of the total
+            # sent.
+            sent += len(points)
+
+            # Ensure we purge the first count number of elements from the queue by popping it the
+            # required number of times.
+            while count > 0:
+                self.queue.pop(0)
+                count -= 1
+
+        stop = datetime.now(UTC)
+        if self.logger and sent > 0:
+            self.logger.info("Uploaded '{}' metrics in {:.3f}ms".format(
+                sent, (stop - start).total_seconds() * 1000))
 
     def IsEmpty(self):
         """
