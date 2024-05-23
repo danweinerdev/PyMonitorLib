@@ -47,9 +47,9 @@ class Daemonize(object):
         """
         if self.logger:
             if self.uid:
-                self.logger.debug('Launching with UID={}', self.uid)
+                self.logger.debug('Launching with UID={}'.format(self.uid))
             if self.gid:
-                self.logger.debug('Launching with GID={}', self.gid)
+                self.logger.debug('Launching with GID={}'.format(self.gid))
             self.logger.debug('--- START DAEMON CONTEXT ---')
 
         self.pid = os.getpid()
