@@ -101,7 +101,7 @@ class MetricPipeline(object):
             skip = False
             for field in metric.fields:
                 value = metric.fields[field]['original']
-                hint = self.config.GetField(field)
+                hint = self.config.GetField(metric.measurement, field)
                 try:
                     metric.fields[field]['clean'] = ConvertValue(value, hint=hint)
                 except KeyError:

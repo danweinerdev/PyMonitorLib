@@ -151,7 +151,7 @@ class Config(object):
             ('bucket', STRING_TYPE)
         ]}
     ENTRY_FIELDS = [
-        ('fields', ARRAY_TYPE, REQUIRED),
+        ('measurements', ARRAY_TYPE, REQUIRED),
         ('tags', HASH_TYPE, OPTIONAL)
     ]
 
@@ -181,20 +181,31 @@ class Config(object):
             self.Load()
         return self.database, self.config[self.database]
 
-    def GetField(self, field):
+    def GetField(self, measurement, field):
         """
         Query the main fields list and return the type hint for the given field if it
         exists. The function will throw a KeyError in the event the field does not
         exist or is an invalid submission.
 
+        :param measurement: name of the measurement with the given field
         :param field: String field to lookup in the config.
         :return: Type hint if the field is known.
         """
-        if field is None:
-            raise KeyError('Unknown field')
+        if measurement is None or field is None:
+            raise KeyError('Unknown measurement or field')
+
         if not self.IsLoaded():
             self.Load()
-        return self.config['fields'][field]
+
+        if measurement not in self.config['measurements']:
+            raise KeyError("Unknown measurement '{}'".format(measurement))
+
+        hint = self.config['measurements'][measurement].get(field, None)
+        if not hint:
+            raise KeyError("Unknown field '{}' on measurement '{}'".format(
+                field, measurement))
+
+        return hint
 
     def GetRoot(self):
         """
@@ -280,7 +291,7 @@ class Config(object):
         if not root:
             raise InvalidConfigError("Missing config for root '{}".format(self.root))
 
-        self.config['fields'] = {}
+        self.config['measurements'] = {}
         self.config[self.root] = {}
         for field in root.split():
             self.config[self.root][field] = {}
@@ -292,7 +303,7 @@ class Config(object):
             if not parser.has_section(device):
                 raise InvalidConfigError("Missing device configuration '{}'".format(device))
 
-        fields = {}
+        measurements = {}
         for entry in self.config[self.root].keys():
             self.RequiredFields(parser, entry, [k for k, v, r in self.ENTRY_FIELDS if r])
             self.OptionalFields(parser, entry, [k for k, v, r in self.ENTRY_FIELDS if not r])
@@ -323,29 +334,31 @@ class Config(object):
                     raise InvalidConfigError("Invalid field '{}' unable to determine type"
                         .format(option))
 
-            for field in self.config[self.root][entry]['fields']:
-                if field not in fields:
-                    fields[field] = []
+            for measurement in self.config[self.root][entry]['measurements']:
+                if measurement not in measurements:
+                    measurements[measurement] = []
 
-        for field in fields.keys():
-            if not parser.has_section(field):
-                raise InvalidConfigError("Unknown field '{}' in config")
-            for option in parser.options(field):
-                if field not in self.config['fields']:
-                    self.config['fields'][option] = self.ParseOption(parser, field, option)
-                    fields[field].append(option)
+        for measurement in measurements.keys():
+            if not parser.has_section(measurement):
+                raise InvalidConfigError("Unknown measurement '{}' in config".format(measurement))
+            for option in parser.options(measurement):
+                if measurement not in self.config['measurements']:
+                    self.config['measurements'][measurement] = dict()
+                if 'option' not in self.config['measurements'][measurement]:
+                    self.config['measurements'][measurement][option] = self.ParseOption(parser, measurement, option)
+                    measurements[measurement].append(option)
                 else:
-                    raise InvalidConfigError("Duplicate field definition for '{}' in section '{}'"
-                        .format(option, field))
+                    raise InvalidConfigError("Duplicate measurement definition for '{}' in section '{}'"
+                        .format(option, measurement))
 
         for entry, values in self.config[self.root].items():
-            fieldList = []
-            for field in values['fields']:
-                if field in fields:
-                    fieldList.extend(fields[field])
-                else:
-                    raise InvalidConfigError("Unknown field '{}' in entry '{}'".format(field, entry))
-            values['fields'] = fieldList
+            measurementMap = {}
+            for measurement in values['measurements']:
+                if measurement not in measurements:
+                    raise InvalidConfigError("Unknown measurement '{}' in entry '{}'".format(
+                        measurement, entry))
+                measurementMap[measurement] = measurements[measurement]
+            values['measurements'] = measurementMap
 
     @staticmethod
     def ParseOption(parser, section, option):
