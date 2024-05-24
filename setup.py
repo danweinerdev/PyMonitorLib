@@ -20,7 +20,7 @@ setuptools.setup(
                 'telemetry at a set interval.',
     long_description=description.decode('utf-8'),
     long_description_content_type='text/markdown',
-    url='https://github.com/Aprelius/PyMonitorLib',
+    url='https://github.com/Aralocke/PyMonitorLib',
     packages=setuptools.find_packages(),
     classifiers=[
         'Development Status :: 3 - Alpha',
