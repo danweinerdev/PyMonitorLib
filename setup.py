@@ -12,7 +12,7 @@ except IOError as e:
 
 setuptools.setup(
     name='PyMonitorLib',
-    version='0.3.0',
+    version='0.4.0',
     author='Daniel Weiner',
     author_email='info@phantomnet.net',
     description='Library for creating simple interval processes. This is especially '
@@ -25,7 +25,7 @@ setuptools.setup(
     classifiers=[
         'Development Status :: 3 - Alpha',
         'Programming Language :: Python :: 3',
-        'License :: OSI Approved :: MIT License',
+        'License :: OSI Approved :: Apache License',
         'Operating System :: OS Independent',
     ],
     python_requires='>=3.6',
