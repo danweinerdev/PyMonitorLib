@@ -18,6 +18,9 @@ from .config import Config, ConversionFailure, ConvertValue, DefaultValue
 from .database import InfluxDatabase
 from influxdb_client import Point, WritePrecision
 
+from requests.exceptions import ConnectionError, HTTPError, Timeout, TooManyRedirects, RequestException
+from urllib3.exceptions import ConnectTimeoutError, MaxRetryError, NewConnectionError, ProtocolError
+
 MetricValue = Union[int, float, str]
 
 
@@ -140,11 +143,9 @@ class MetricPipeline(object):
         :return: None
         """
         if self.shutdown:
-            return
+            return (False, 0)
 
         sent = 0
-        start = datetime.now(UTC)
-
         while not self.IsEmpty():
             # Copy a slice of metrics from the front of the queue equal to the batch size
             # or the queue size, whatever is less. We copy here to ensure we can successfully
@@ -180,10 +181,35 @@ class MetricPipeline(object):
                 # Push any RuntimeErrors up to the main loop to handle. These usually indicate
                 # that we need to crash.
                 raise e
+            except (Timeout, ConnectTimeoutError) as e:
+                if self.logger:
+                    self.logger.warning('Failed to connect to database')
+                return (False, sent)
+            except (ConnectionError, NewConnectionError, MaxRetryError, ProtocolError) as e:
+                if self.logger:
+                    self.logger.warning('Network error communicating with database: {}'.format(e))
+                return (False, sent)
+            except HTTPError as e:
+                statusCode = e.response.status_code if e.response else 0
+                if 500 <= statusCode < 600:
+                    if self.logger:
+                        self.logger.warning('Server side HTTP error ({}) communicating with database'.format(statusCode))
+                else:
+                    if self.logger:
+                        self.logger.error('Unexpected HTTP Error ({}) from database'.format(statusCode))
+                return (False, sent)
+            except TooManyRedirects as e:
+                if self.logger:
+                    self.logger.warning('Unexpected redirects communicating with database')
+                return (False, sent)
+            except RequestException as e:
+                if self.logger:
+                    self.logger.error('Unexpected request error: {}'.format(e))
+                return (False, sent)
             except Exception as e:
                 if self.logger:
                     self.logger.error('Unhandled error sending metrics: {}'.format(e))
-                continue
+                return (False, sent)
 
             # If an exception was not raised it is likely that the call to sending the metrics to
             # the database succeeded as planned and we should count the metrics as part of the total
@@ -196,10 +222,7 @@ class MetricPipeline(object):
                 self.queue.pop(0)
                 count -= 1
 
-        stop = datetime.now(UTC)
-        if self.logger and sent > 0:
-            self.logger.info("Uploaded '{}' metrics in {:.3f}ms".format(
-                sent, (stop - start).total_seconds() * 1000))
+        return (True, sent)
 
     def IsEmpty(self):
         """

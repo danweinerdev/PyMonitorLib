@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import argparse
-import datetime
+from datetime import datetime, UTC
 import logging
 from logging.handlers import TimedRotatingFileHandler
 import os
@@ -175,7 +175,21 @@ class Executor(object):
                                 self.__shutdown = True
                         failures = 0
                         if not self.__shutdown:
-                            self.pipeline.Flush()
+                            # This actually flushes the metric pipeline. We will attempt to batch
+                            # everything we currently have and return a tuple indicating what was
+                            # actually sent.
+
+                            start = datetime.now(UTC)
+                            flush, count = self.pipeline.Flush()
+                            stop = datetime.now(UTC)
+
+                            if flush and count > 0:
+                                self.logger.info("Uploaded '{}' metrics in {:.3f}ms".format(
+                                    count, (stop - start).total_seconds() * 1000))
+                            elif self.logger:
+                                self.logger.info('Flush to database failed. (Queue size: {} metrics)'.format(
+                                    len(self.pipeline.queue)))
+
                             if Select(self.__rd, [], self.interval, logger=self.logger):
                                 try:
                                     # TODO: Turn this into a Drain() function
@@ -238,7 +252,7 @@ class Executor(object):
         class LogFormatter(logging.Formatter):
             def formatTime(self, record, datefmt=None):
                 # Use ISO 8601 format
-                return datetime.datetime.fromtimestamp(record.created).isoformat()
+                return datetime.fromtimestamp(record.created).isoformat()
 
         formatter = LogFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
